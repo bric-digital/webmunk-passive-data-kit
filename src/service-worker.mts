@@ -105,6 +105,17 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
       })
   }
 
+  logEvent(event:any) {
+    if (event !== undefined) {
+      if (['', null, undefined].includes(event.name) == false) {
+        console.log('[PDK] Enqueue data point for logging:')
+        console.log(event)
+
+        this.enqueueDataPoint(event.name, event)
+      }
+    }
+  }
+
   async enqueueDataPoint(generatorId, dataPoint) {
     return new Promise<void>((resolve) => {
       if (generatorId === null || dataPoint === null) {
