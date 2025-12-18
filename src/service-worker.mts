@@ -16,6 +16,8 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
 
   identifier:string = 'unknown-id'
 
+  alarmCreated:boolean = false
+
   database = null
   queuedPoints = []
   lastPersisted = 0
@@ -66,27 +68,6 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
       }
     }
 
-    const me = this;
-
-    chrome.alarms.create('pdk-upload', { periodInMinutes: 0.5 })
-    chrome.alarms.onAlarm.addListener((alarm) => {
-      console.log(`[PDK] ALARM...`)
-      console.log(alarm)
-
-      if (alarm.name === 'pdk-upload') {
-        console.log(`[PDK] Uploading data points...`)
-
-        me.uploadQueuedDataPoints((remaining) => {
-          console.log(`[PDK] ${remaining} data points to upload...`)
-        })
-        .then(() => {
-          console.log(`[PDK] Upload complete...`)
-
-          me.refreshConfiguration()
-        })
-      }
-    })
-
     this.refreshConfiguration()
   }
 
@@ -115,6 +96,9 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
 
   refreshConfiguration() {
     console.log('PassiveDataKitModule refreshing configuration...')
+
+    const me = this
+
     webmunkCorePlugin.fetchConfiguration()
       .then((configuration:WebmunkConfiguration) => {
         console.log('PassiveDataKitModule fetched:')
@@ -126,6 +110,29 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
           if (passiveDataKitConfig !== undefined) {
             this.updateConfiguration(passiveDataKitConfig)
 
+            if (me.alarmCreated === false) {
+              chrome.alarms.create('pdk-upload', { periodInMinutes: 0.5 })
+
+              chrome.alarms.onAlarm.addListener((alarm) => {
+                console.log(`[PDK] ALARM...`)
+                console.log(alarm)
+
+                if (alarm.name === 'pdk-upload') {
+                  console.log(`[PDK] Uploading data points...`)
+
+                  me.uploadQueuedDataPoints((remaining) => {
+                    console.log(`[PDK] ${remaining} data points to upload...`)
+                  })
+                  .then(() => {
+                    console.log(`[PDK] Upload complete...`)
+
+                    me.refreshConfiguration()
+                  })
+                }
+              })
+
+              me.alarmCreated = true
+            }
             return
           }
         }
