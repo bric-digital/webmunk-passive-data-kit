@@ -226,7 +226,9 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
           points[i].date = (new Date()).getTime()
         }
 
-        metadata['source'] = this.identifier
+        console.log(`metadata['source'] = ${me.identifier}`)
+
+        metadata['source'] = me.identifier
         metadata['generator'] = points[i].generatorId + ': ' + userAgent
         metadata['generator-id'] = points[i].generatorId
         metadata['timestamp'] = points[i].date / 1000 // Unix timestamp
