@@ -66,7 +66,18 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
       }
     }
 
+    chrome.alarms.create('pdk-upload', { periodInMinutes: 5 })
+    chrome.alarms.onAlarm.addListener(this.uploadAndRefresh)
+
     this.refreshConfiguration()
+  }
+
+  uploadAndRefresh(alarm) {
+    if (alarm.name === 'pdk-upload') {
+      this.uploadQueuedDataPoints((remaining) => {
+        console.log(`[PDK] ${remaining} data points to upload...`)
+      })
+    }
   }
 
   updateConfiguration(config) {
