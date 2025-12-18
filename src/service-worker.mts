@@ -70,9 +70,6 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
 
     chrome.alarms.create('pdk-upload', { periodInMinutes: 0.5 })
     chrome.alarms.onAlarm.addListener((alarm) => {
-      console.log(`[PDK] uploadAndRefresh`)
-      console.log(me)
-
       if (alarm.name === 'pdk-upload') {
         me.uploadQueuedDataPoints((remaining) => {
           console.log(`[PDK] ${remaining} data points to upload...`)
@@ -200,7 +197,7 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
     })
   }
 
-  async uploadBundle(userId, points) {
+  async uploadBundle(points) {
     return new Promise<void>((resolve) => {
       const manifest = chrome.runtime.getManifest()
 
@@ -217,7 +214,7 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
           points[i].date = (new Date()).getTime()
         }
 
-        metadata['source'] = userId
+        metadata['source'] = this.identifier
         metadata['generator'] = points[i].generatorId + ': ' + userAgent
         metadata['generator-id'] = points[i].generatorId
         metadata['timestamp'] = points[i].date / 1000 // Unix timestamp
