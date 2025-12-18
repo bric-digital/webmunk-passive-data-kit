@@ -44,7 +44,10 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
     }
 
     request.onupgradeneeded = (event) => {
-      this.database = event.target.result
+      console.log('request.onupgradeneeded')
+      console.log(event)
+
+      this.database = request.result
 
       switch (event.oldVersion) {
         case 0: {
