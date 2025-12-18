@@ -203,6 +203,8 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
   }
 
   async uploadBundle(points) {
+    const me = this
+
     return new Promise<void>((resolve) => {
       const manifest = chrome.runtime.getManifest()
 
@@ -243,9 +245,9 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
 
       compressedResponse.arrayBuffer()
         .then(function (buffer) {
-          const compressedBase64 = this.blobToB64(buffer)
+          const compressedBase64 = me.blobToB64(buffer)
 
-          fetch(this.uploadUrl, {
+          fetch(me.uploadUrl, {
             method: 'POST',
             mode: 'cors', // no-cors, *cors, same-origin
             cache: 'no-cache', // *default, no-cache, reload, force-cache, only-if-cached
