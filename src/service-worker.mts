@@ -328,7 +328,7 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
 
         const request = index.getAll(0, 64)
 
-        request.onsuccess = function () {
+        request.onsuccess = () => {
           const pendingItems = request.result
 
           if (pendingItems.length === 0) {
