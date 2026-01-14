@@ -16,7 +16,7 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
 
   identifier:string = 'unknown-id'
 
-  alarmCreated:boolean = false
+  alarmCreated:boolean = true
 
   database = null
   queuedPoints = []
