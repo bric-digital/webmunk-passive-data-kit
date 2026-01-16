@@ -76,9 +76,13 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
     console.log('[PDK] updateConfiguration')
     console.log(config)
 
-    chrome.storage.local.get('webmunkIdentifier', (result) => {
+    const me = this
+    
+    // Use Promise-based API to ensure identifier is set before proceeding
+    chrome.storage.local.get('webmunkIdentifier').then((result) => {
       if (result['webmunkIdentifier'] !== undefined) {
-        this.identifier = result['webmunkIdentifier']
+        me.identifier = result['webmunkIdentifier']
+        console.log(`[PDK] Set identifier from storage: ${me.identifier}`)
       }
     })
 
@@ -86,6 +90,7 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
     this.group = config['identifier']
 
     console.log(`this.identifier = ${this.identifier}`)
+    console.log(`this.group = ${this.group}`)
 
     let fieldKey = config['field_key']
 
