@@ -97,42 +97,44 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
   }
 
   refreshConfiguration() {
-    console.log('PassiveDataKitModule refreshing configuration...')
-
     webmunkCorePlugin.fetchConfiguration()
       .then((configuration:WebmunkConfiguration) => {
-        console.log('PassiveDataKitModule fetched:')
-        console.log(configuration)
-
         if (configuration !== undefined) {
           const passiveDataKitConfig = configuration['passive_data_kit']
 
           if (passiveDataKitConfig !== undefined) {
             this.updateConfiguration(passiveDataKitConfig)
 
-            if (this.alarmCreated === false) {
-              chrome.alarms.create('pdk-upload', { periodInMinutes: 0.5 })
-
-              chrome.alarms.onAlarm.addListener((alarm) => {
-                console.log(`[PDK] ALARM...`)
-                console.log(alarm)
-
-                if (alarm.name === 'pdk-upload') {
-                  console.log(`[PDK] Uploading data points...`)
-
-                  this.uploadQueuedDataPoints((remaining) => {
-                    console.log(`[PDK] ${remaining} data points to upload...`)
-                  })
-                  .then(() => {
-                    console.log(`[PDK] Upload complete...`)
-
-                    this.refreshConfiguration()
-                  })
-                }
+            this.uploadQueuedDataPoints((remaining) => {
+              console.log(`[PDK] ${remaining} data points to upload...`)
+            })
+              .then(() => {
+                console.log(`[PDK] Upload complete...`)
               })
 
-              this.alarmCreated = true
-            }
+            // if (this.alarmCreated === false) {
+            //   chrome.alarms.create('pdk-upload', { periodInMinutes: 0.5 })
+
+            //   chrome.alarms.onAlarm.addListener((alarm) => {
+            //     console.log(`[PDK] ALARM...`)
+            //     console.log(alarm)
+
+            //     if (alarm.name === 'pdk-upload') {
+            //       console.log(`[PDK] Uploading data points...`)
+
+            //       this.uploadQueuedDataPoints((remaining) => {
+            //         console.log(`[PDK] ${remaining} data points to upload...`)
+            //       })
+            //       .then(() => {
+            //         console.log(`[PDK] Upload complete...`)
+
+            //         this.refreshConfiguration()
+            //       })
+            //     }
+            //   })
+
+            //   this.alarmCreated = true
+            // }
             return
           }
         }
