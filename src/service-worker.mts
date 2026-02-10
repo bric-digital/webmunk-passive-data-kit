@@ -2,13 +2,13 @@
 import * as nacl from "tweetnacl";
 import * as naclUtil from "tweetnacl-util";
 
-import { WebmunkConfiguration } from '@bric/webmunk-core/extension'
-import webmunkCorePlugin, { WebmunkServiceWorkerModule, registerWebmunkModule } from '@bric/webmunk-core/service-worker'
+import { REXConfiguration } from '@bric/rex-core/extension'
+import rexCorePlugin, { REXServiceWorkerModule, registerREXModule } from '@bric/rex-core/service-worker'
 import { error } from "jquery";
 
 const PDK_DATABASE_VERSION = 1
 
-class PassiveDataKitModule extends WebmunkServiceWorkerModule {
+class PassiveDataKitModule extends REXServiceWorkerModule {
   uploadUrl:string = ''
   serverKey:string = ''
   serverFieldKey:Uint8Array<ArrayBufferLike>
@@ -97,8 +97,8 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
   }
 
   refreshConfiguration() {
-    webmunkCorePlugin.fetchConfiguration()
-      .then((configuration:WebmunkConfiguration) => {
+    rexCorePlugin.fetchConfiguration()
+      .then((configuration:REXConfiguration) => {
         if (configuration !== undefined) {
           const passiveDataKitConfig = configuration['passive_data_kit']
 
@@ -470,6 +470,6 @@ class PassiveDataKitModule extends WebmunkServiceWorkerModule {
 
 const plugin = new PassiveDataKitModule()
 
-registerWebmunkModule(plugin)
+registerREXModule(plugin)
 
 export default plugin

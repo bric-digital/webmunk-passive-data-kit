@@ -1,8 +1,8 @@
-import { WebmunkConfiguration } from '@bric/webmunk-core/extension'
+import { REXConfiguration } from '@bric/rex-core/extension'
 
-import { WebmunkClientModule, registerWebmunkModule } from '@bric/webmunk-core/browser'
+import { REXClientModule, registerREXModule } from '@bric/rex-core/browser'
 
-class PassiveDataKitModule extends WebmunkClientModule {
+class PassiveDataKitModule extends REXClientModule {
   configuration: object
   refreshTimeout: number = 0
 
@@ -16,7 +16,7 @@ class PassiveDataKitModule extends WebmunkClientModule {
     chrome.runtime.sendMessage({
         'messageType': 'fetchConfiguration',
       }).then((response:{ [name: string]: any; }) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-        const configuration = response as WebmunkConfiguration
+        const configuration = response as REXConfiguration
 
         this.configuration = configuration['page_manipulation']
       })
@@ -37,6 +37,6 @@ class PassiveDataKitModule extends WebmunkClientModule {
 
 const plugin = new PassiveDataKitModule()
 
-registerWebmunkModule(plugin)
+registerREXModule(plugin)
 
 export default plugin
