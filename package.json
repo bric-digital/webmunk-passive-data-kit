@@ -47,7 +47,7 @@
     },
     "dependencies": {
         "@bric/rex-core": "github:bric-digital/rex-core",
-        "jquery": "^3.7.1",
+        "jquery": "^4.0.0",
         "tweetnacl": "^1.0.3",
         "tweetnacl-util": "^0.15.1"
     }
