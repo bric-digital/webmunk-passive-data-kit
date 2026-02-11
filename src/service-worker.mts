@@ -156,63 +156,68 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     }
   }
 
-  async enqueueDataPoint(generatorId, dataPoint) {
-    return new Promise<void>((resolve) => {
-      if (generatorId === null || dataPoint === null) {
-        // pass
-      } else {
-        const payload = {
-          generatorId,
-          dataPoint,
-          transmitted: 0
-        }
-
-        if (dataPoint.date !== undefined) {
-          payload['date'] = dataPoint.date
-        } else {
-          payload['date'] = Date.now()
-        }
-
-        this.queuedPoints.push(payload)
+  enqueueDataPoint(generatorId, dataPoint) {
+    if (generatorId === null || dataPoint === null) {
+      // pass
+    } else {
+      const payload = {
+        generatorId,
+        dataPoint,
+        transmitted: 0
       }
 
-      if (this.queuedPoints.length > 0 && (Date.now() - this.lastPersisted) > 1000) {
-        this.persistDataPoints()
-          .then(() => {
-            resolve()
-          })
+      if (dataPoint.date !== undefined) {
+        payload['date'] = dataPoint.date
       } else {
-        resolve()
+        payload['date'] = Date.now()
       }
-    })
+
+      this.queuedPoints.push(payload)
+    }
+
+    console.log('this.queuedPoints')
+    console.log(this.queuedPoints)
+
+    if (this.queuedPoints.length > 0 && (Date.now() - this.lastPersisted) > 1000) {
+      this.persistDataPoints()
+        .then((pointsSaved) => {
+          console.log(`${pointsSaved} points saved successfully.`)
+        })
+    }
   }
 
   async persistDataPoints () {
-    return new Promise<void>((resolve) => {
+    return new Promise<number>((resolve) => {
       this.lastPersisted = Date.now()
 
-      const pendingPoints = this.queuedPoints
+      let pointsSaved = 0
 
-      this.queuedPoints = []
+      const storePoint = () => {
+        if (this.queuedPoints.length === 0) {
+          resolve(pointsSaved)
+        } else {
+          const objectStore = this.database.transaction(['dataPoints'], 'readwrite').objectStore('dataPoints')
 
-      const objectStore = this.database.transaction(['dataPoints'], 'readwrite').objectStore('dataPoints')
+          const point = this.queuedPoints.pop()
 
-      pendingPoints.forEach(function (point) {
-        const request = objectStore.add(point)
+          const request = objectStore.add(point)
 
-        request.onsuccess = function (event) { // eslint-disable-line @typescript-eslint/no-unused-vars
-          console.log(`[PassiveDataKitModule] Data point saved successfully: ${point.generatorId}.`)
+          request.onsuccess = function (event) { // eslint-disable-line @typescript-eslint/no-unused-vars
+            console.log(`[PassiveDataKitModule] Data point saved successfully: ${point.generatorId}.`)
+
+            pointsSaved += 1
+
+            storePoint()
+          }
+
+          request.onerror = function (event) {
+            console.log(`[PassiveDataKitModule] Data point enqueuing failed: ${point.generatorId}.`)
+            console.log(event)
+
+            resolve(pointsSaved)
+          }
         }
-
-        request.onerror = function (event) {
-          console.log(`[PassiveDataKitModule] Data point enqueuing failed: ${point.generatorId}.`)
-          console.log(event)
-        }
-      })
-
-      console.log(`[PassiveDataKitModule] Data points saved successfully: ${pendingPoints.length}.`)
-
-      resolve()
+      }
     })
   }
 
