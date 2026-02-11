@@ -222,6 +222,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
           }
         }
       }
+
+      storePoint()
     })
   }
 
