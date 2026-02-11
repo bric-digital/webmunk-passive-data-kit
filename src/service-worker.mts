@@ -178,7 +178,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     console.log('this.queuedPoints')
     console.log(this.queuedPoints)
 
-    if (this.queuedPoints.length > 0 && (Date.now() - this.lastPersisted) > 1000) {
+    if (this.queuedPoints.length > 0) { // } && (Date.now() - this.lastPersisted) > 1000) {
       console.log('persisting points')
       this.persistDataPoints()
         .then((pointsSaved) => {
