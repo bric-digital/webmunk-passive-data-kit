@@ -36,19 +36,16 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     const request = indexedDB.open('passive_data_kit', PDK_DATABASE_VERSION)
 
     request.onerror = (event) => {
-      console.error(`[PassiveDataKitModule] Unable to open Passive Data Kit database: ${event}`)
+      console.error(`[rex-passive-data-kit] Unable to open Passive Data Kit database: ${event}`)
     }
 
     request.onsuccess = (event) => { // eslint-disable-line @typescript-eslint/no-unused-vars
       this.database = request.result
 
-      console.log(`[PassiveDataKitModule] Successfully opened Passive Data Kit database.`)
+      console.log(`[rex-passive-data-kit] Successfully opened Passive Data Kit database.`)
     }
 
     request.onupgradeneeded = (event) => {
-      console.log('request.onupgradeneeded')
-      console.log(event)
-
       this.database = request.result
 
       switch (event.oldVersion) {
@@ -63,7 +60,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
           dataPoints.createIndex('date', 'date', { unique: false })
           dataPoints.createIndex('transmitted', 'transmitted', { unique: false })
 
-          console.log(`[PassiveDataKitModule] Successfully upgraded Passive Data Kit database.`)
+          console.log(`[rex-passive-data-kit] Successfully upgraded Passive Data Kit database.`)
         }
       }
     }
@@ -72,13 +69,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
   }
 
   updateConfiguration(config) {
-    console.log('[PDK] updateConfiguration')
-    console.log(config)
-
     this.uploadUrl = config['endpoint']
     this.identifier = config['identifier']
-
-    console.log(`this.identifier = ${this.identifier}`)
 
     const fieldKey = config['field_key']
 
@@ -106,35 +98,12 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
             this.updateConfiguration(passiveDataKitConfig)
 
             this.uploadQueuedDataPoints((remaining) => {
-              console.log(`[PDK] ${remaining} data points to upload...`)
+              console.log(`[rex-passive-data-kit] ${remaining} data points to upload...`)
             })
               .then(() => {
-                console.log(`[PDK] Upload complete...`)
+                console.log(`[rex-passive-data-kit] Upload complete...`)
               })
 
-            // if (this.alarmCreated === false) {
-            //   chrome.alarms.create('pdk-upload', { periodInMinutes: 0.5 })
-
-            //   chrome.alarms.onAlarm.addListener((alarm) => {
-            //     console.log(`[PDK] ALARM...`)
-            //     console.log(alarm)
-
-            //     if (alarm.name === 'pdk-upload') {
-            //       console.log(`[PDK] Uploading data points...`)
-
-            //       this.uploadQueuedDataPoints((remaining) => {
-            //         console.log(`[PDK] ${remaining} data points to upload...`)
-            //       })
-            //       .then(() => {
-            //         console.log(`[PDK] Upload complete...`)
-
-            //         this.refreshConfiguration()
-            //       })
-            //     }
-            //   })
-
-            //   this.alarmCreated = true
-            // }
             return
           }
         }
@@ -148,7 +117,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
   logEvent(event:object) {
     if (event !== undefined) {
       if (['', null, undefined].includes(event['name']) == false) {
-        console.log('[PDK] Enqueue data point for logging:')
+        console.log('[rex-passive-data-kit] Enqueue data point for logging:')
         console.log(event)
 
         this.enqueueDataPoint(event['name'], event)
@@ -175,14 +144,10 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
       this.queuedPoints.push(payload)
     }
 
-    console.log('this.queuedPoints')
-    console.log(this.queuedPoints)
-
     if (this.queuedPoints.length > 0) { // } && (Date.now() - this.lastPersisted) > 1000) {
-      console.log('persisting points')
       this.persistDataPoints()
         .then((pointsSaved) => {
-          console.log(`${pointsSaved} points saved successfully.`)
+          console.log(`[rex-passive-data-kit] ${pointsSaved} points saved successfully.`)
         })
     }
   }
@@ -201,13 +166,10 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
           const point = this.queuedPoints.pop()
 
-          console.log('persisting')
-          console.log(point)
-
           const request = objectStore.add(point)
 
           request.onsuccess = function (event) { // eslint-disable-line @typescript-eslint/no-unused-vars
-            console.log(`[PassiveDataKitModule] Data point saved successfully: ${point.generatorId}.`)
+            console.log(`[rex-passive-data-kit] Data point saved successfully: ${point.generatorId}.`)
 
             pointsSaved += 1
 
@@ -215,7 +177,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
           }
 
           request.onerror = function (event) {
-            console.log(`[PassiveDataKitModule] Data point enqueuing failed: ${point.generatorId}.`)
+            console.log(`[rex-passive-data-kit] Data point enqueuing failed: ${point.generatorId}.`)
             console.log(event)
 
             resolve(pointsSaved)
@@ -244,8 +206,6 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
           points[i].date = (new Date()).getTime()
         }
 
-        console.log(`metadata['source'] = ${this.identifier}`)
-
         metadata['source'] = this.identifier
         metadata['generator'] = points[i].generatorId + ': ' + userAgent
         metadata['generator-id'] = points[i].generatorId
@@ -272,7 +232,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
         .then((buffer) => {
           const compressedBase64 = this.blobToB64(buffer)
 
-          console.log(`[PDK] upload to "${this.uploadUrl}"...`)
+          console.log(`[rex-passive-data-kit] Upload to "${this.uploadUrl}"...`)
 
           fetch(this.uploadUrl, {
             method: 'POST',
@@ -315,7 +275,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
         }
 
         request.onerror = function (event) {
-          console.log('The data has write has failed')
+          console.log('[rex-passive-data-kit] The data update has has failed.')
           console.log(event)
 
           reject(error)
@@ -337,7 +297,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
       const countRequest = index.count(0)
 
       countRequest.onsuccess = () => {
-        console.log(`[PDK] Remaining data points: ${countRequest.result}`)
+        console.log(`[rex-passive-data-kit] Remaining data points: ${countRequest.result}`)
 
         const request = index.getAll(0, 64)
 
@@ -354,7 +314,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
             const pendingRemaining = pendingItems.length
 
-            console.log(`[PDK] Remaining data points (this bundle): ${pendingRemaining}`)
+            console.log(`[rex-passive-data-kit] Remaining data points (this bundle): ${pendingRemaining}`)
 
             progressCallback(pendingRemaining)
 
@@ -422,14 +382,14 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
         }
 
         request.onerror = (event) => {
-          console.log('[PDK] PDK database error')
+          console.log('[rex-passive-data-kit] PDK database error')
           console.log(event)
           reject(event)
         }
       }
 
       countRequest.onerror = (event) => {
-        console.log('[PDK] PDK database error')
+        console.log('[rex-passive-data-kit] PDK database error')
         console.log(event)
         reject(event)
       }
