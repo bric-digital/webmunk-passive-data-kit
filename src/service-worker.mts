@@ -288,6 +288,12 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     return new Promise<void>((resolve, reject) => {
       if (this.currentlyUploading) {
         resolve()
+        return
+      }
+
+      if (this.database === null) {
+        resolve()
+        return
       }
 
       const index = this.database.transaction(['dataPoints'], 'readonly')
