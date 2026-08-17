@@ -412,6 +412,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
                 } else {
                   reject(reply)
                 }
+              }).catch((err) => {
+                reject(`Response from PDK server was not JSON. Status code: ${response.status}`)
               })
             })
             .catch((error) => {
@@ -654,6 +656,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
           }
 
           request.onerror = (event) => {
+            this.currentlyUploading = false
+
             console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve pending points.')
             console.log(event)
 
@@ -662,6 +666,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
         }
 
         countRequest.onerror = (event) => {
+          this.currentlyUploading = false
+
           console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve count of pending points.')
           console.log(event)
 
