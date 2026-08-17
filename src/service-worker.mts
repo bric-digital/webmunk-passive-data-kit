@@ -50,6 +50,29 @@ export interface REXPDKConfiguration {
   endpoint: string,
   identifier: string,
   field_key?: string,
+  // 'v3' uploads bundles with PUT and a bearer credential. Any other value (or
+  // none) uses the legacy form-encoded POST. There is deliberately no fallback
+  // between the two: a server that only accepts v3 can only reject a POST, so
+  // failing loudly and leaving the bundle queued beats silently downgrading.
+  endpoint_version?: string,
+  authorization?: REXPDKAuthorization,
+}
+
+export interface REXPDKAuthorization {
+  token?: string,
+}
+
+export class REXPDKUploadError extends Error {
+  status: number
+  responseBody: unknown
+
+  constructor(status: number, responseBody: unknown) {
+    super(`Data bundle upload failed with HTTP ${status}.`)
+
+    this.name = 'REXPDKUploadError'
+    this.status = status
+    this.responseBody = responseBody
+  }
 }
 
 export interface REXPDKEvent {
@@ -73,6 +96,8 @@ export class PassiveDataKitPointAnnotator {
 
 class PassiveDataKitModule extends REXServiceWorkerModule {
   uploadUrl: string = ''
+  endpointVersion: string = ''
+  bearerToken: string = ''
   serverKey: string = ''
   serverFieldKey: Uint8Array<ArrayBufferLike> | null = null
   localFieldKey: Uint8Array<ArrayBufferLike> | null = null
@@ -136,7 +161,12 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
   updateConfiguration(config: REXPDKConfiguration) {
     this.uploadUrl = config['endpoint']
-    
+
+    // Validated at upload time, not here: a refresh that threw on a malformed
+    // credential would wedge the module on a stale endpoint.
+    this.endpointVersion = config['endpoint_version'] || ''
+    this.bearerToken = config['authorization']?.token || ''
+
     if (config['identifier'] !== undefined && config['identifier'] !== null) {
       this.identifier = config['identifier']
     } else {
@@ -326,53 +356,145 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     })
   }
 
-  async uploadBundle(points:REXPDKDataPoint[]) {
-    return new Promise<any>((resolve, reject) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-      const manifest = chrome.runtime.getManifest()
+  // Moves the enqueue-time fields the module stamps on each point into the
+  // server-facing 'passive-data-metadata' envelope. Shared by both transports:
+  // an override that reimplements this drifts from it (see Keystone's copy,
+  // which missed 'enqueued-at' for a month).
+  stampPointMetadata(points:REXPDKDataPoint[]) {
+    const manifest = chrome.runtime.getManifest()
 
+    const userAgent = manifest.name + '/' + manifest.version + ' ' + navigator.userAgent
+
+    for (let i = 0; i < points.length; i++) {
+      let pointDate:number|undefined = points[i].date
+
+      if (pointDate === undefined) {
+        pointDate = Date.now()
+      }
+
+      const metadata: REXPDKPointMetadata = {
+        source: `${this.identifier}`,
+        generator: points[i].generatorId + ': ' + userAgent,
+        'generator-id': points[i].generatorId,
+        timestamp: pointDate / 1000,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }
+
+      if (points[i].configurationHash !== undefined) {
+        metadata['configuration-hash'] = points[i].configurationHash
+
+        delete points[i].configurationHash
+      }
+
+      if (points[i].enqueuedAt !== undefined) {
+        metadata['enqueued-at'] = points[i].enqueuedAt
+
+        delete points[i].enqueuedAt
+      }
+
+      if (points[i].date === undefined) {
+        points[i].date = (new Date()).getTime()
+      }
+
+      points[i]['passive-data-metadata'] = metadata
+    }
+  }
+
+  async uploadBundle(points:REXPDKDataPoint[]) {
+    this.stampPointMetadata(points)
+
+    if (this.endpointVersion === 'v3') {
+      return this.putBundle(points)
+    }
+
+    return this.postBundle(points)
+  }
+
+  // v3 ingest: raw gzip bytes authorized by a bearer credential, with the
+  // participant identified by header so neither token nor identifier lands in
+  // the URL.
+  async putBundle(points:REXPDKDataPoint[]) {
+    if (this.uploadUrl === '') {
+      throw new Error('Unable to upload data bundle: passive_data_kit.endpoint is missing.')
+    }
+
+    if (this.bearerToken === '') {
+      throw new Error('Unable to upload data bundle: passive_data_kit.authorization.token is missing.')
+    }
+
+    if (this.identifier === '' || this.identifier === 'undefined') {
+      throw new Error('Unable to upload data bundle: participant identifier is missing.')
+    }
+
+    const stream = new Blob([JSON.stringify(points, null, 2)])
+      .stream()
+      .pipeThrough(new CompressionStream('gzip'))
+
+    const body = await new Response(stream).arrayBuffer()
+
+    console.log(`[rex-passive-data-kit] Upload to "${this.uploadUrl}"...`)
+
+    const response = await fetch(this.uploadUrl, {
+      method: 'PUT',
+      mode: 'cors',
+      cache: 'no-cache',
+      headers: {
+        'Authorization': `Bearer ${this.bearerToken}`,
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip',
+        'X-PDK-IDENTIFIER': this.identifier
+      },
+      redirect: 'follow',
+      referrerPolicy: 'no-referrer',
+      body
+    })
+
+    const reply = await this.replyOrAccepted(response)
+
+    if (response.ok === false) {
+      throw new REXPDKUploadError(response.status, reply)
+    }
+
+    return reply
+  }
+
+  // A 2xx with no body is an accepted bundle, not a parse failure: caches ahead
+  // of the ingest endpoint answer a stored PUT with no content at all.
+  async replyOrAccepted(response: Response): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const text = await response.text()
+
+    if (text.trim() === '') {
+      return {
+        message: 'Data bundle added successfully, and ready for processing.',
+        added: true
+      }
+    }
+
+    try {
+      return JSON.parse(text)
+    } catch (error) {
+      if (response.ok) {
+        return {
+          message: 'Data bundle added successfully, and ready for processing.',
+          added: true
+        }
+      }
+
+      return {
+        error: text,
+        parse_error: `${error}`
+      }
+    }
+  }
+
+  async postBundle(points:REXPDKDataPoint[]) {
+    return new Promise<any>((resolve, reject) => { // eslint-disable-line @typescript-eslint/no-explicit-any
       const keyPair = nacl.box.keyPair() // eslint-disable-line @typescript-eslint/no-unused-vars
 
       const serverPublicKey = naclUtil.decodeBase64(this.serverKey) // eslint-disable-line @typescript-eslint/no-unused-vars
 
-      const userAgent = manifest.name + '/' + manifest.version + ' ' + navigator.userAgent
-
-      for (let i = 0; i < points.length; i++) {
-        let pointDate:number|undefined = points[i].date
-
-        if (pointDate === undefined) {
-          pointDate = Date.now()
-        }
-
-        const metadata: REXPDKPointMetadata = {
-          source: `${this.identifier}`,
-          generator: points[i].generatorId + ': ' + userAgent,
-          'generator-id': points[i].generatorId,
-          timestamp: pointDate / 1000,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }
-
-        if (points[i].configurationHash !== undefined) {
-          metadata['configuration-hash'] = points[i].configurationHash
-
-          delete points[i].configurationHash
-        }
-
-        if (points[i].enqueuedAt !== undefined) {
-          metadata['enqueued-at'] = points[i].enqueuedAt
-
-          delete points[i].enqueuedAt
-        }
-
-        if (points[i].date === undefined) {
-          points[i].date = (new Date()).getTime()
-        }
-
-        // metadata['generated-key'] = nacl.util.encodeBase64(keyPair.publicKey)
-
-        points[i]['passive-data-metadata'] = metadata
-
-        // pdk.encryptFields(serverPublicKey, keyPair.secretKey, points[i])
-      }
+      // pdk.encryptFields(serverPublicKey, keyPair.secretKey, points[i])
+      // metadata['generated-key'] = nacl.util.encodeBase64(keyPair.publicKey)
 
       const dataString = JSON.stringify(points, null, 2)
 
@@ -457,16 +579,29 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
   }
 
   async uploadQueuedDataPoints(progressCallback: any, responses:any[] = []) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    // Serialize uploads: overlapping calls (a scheduled upload plus a
+    // config-apply notification, for instance) would read the same
+    // untransmitted points and transmit them twice. The flag must be set
+    // synchronously, before any await, or two same-tick calls both pass the
+    // check. In-memory on purpose: a killed worker restarts with it clear.
+    if (this.currentlyUploading) {
+      return Promise.reject('Still uploading data points. Skipping...')
+    }
+
+    this.currentlyUploading = true
+
     // Points enqueued inside the persist throttle window are still in memory;
     // persist them first so the IndexedDB read below sees everything enqueued so far.
     await this.persistDataPoints()
 
     return new Promise<any>((resolveUploadQueued, reject) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-      if (this.currentlyUploading) {
-        reject('Still uploading data points. Skipping...')
-      } else if (this.database === null) {
+      if (this.database === null) {
+        this.currentlyUploading = false
+
         reject('Database not yet open. Skipping')
       } else if (this.identifier === undefined || this.identifier === null) {
+        this.currentlyUploading = false
+
         reject('Identifier not set. Skipping')
       } else {
         const index = this.database.transaction(['dataPoints'], 'readonly')
@@ -661,6 +796,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
             console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve pending points.')
             console.log(event)
 
+            this.currentlyUploading = false
+
             reject(`Database error: ${event}`)
           }
         }
@@ -670,6 +807,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
           console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve count of pending points.')
           console.log(event)
+
+          this.currentlyUploading = false
 
           reject(`Database error: ${event}`)
         }
