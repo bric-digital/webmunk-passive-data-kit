@@ -413,7 +413,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
                   reject(reply)
                 }
               }).catch((err) => {
-                reject(`Response from PDK server was not JSON. Status code: ${response.status}`)
+                reject(`Response from PDK server was not JSON. Status code: ${response.status} Error: ${err}`)
               })
             })
             .catch((error) => {
