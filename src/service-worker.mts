@@ -332,7 +332,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
           const point: REXPDKDataPointDBRecord | undefined = this.queuedPoints.pop()
 
           if (point !== undefined) {
-            const request = objectStore.add(point)
+            const request = objectStore.add(JSON.parse(JSON.stringify(point)))
 
             request.onsuccess = function (event) { // eslint-disable-line @typescript-eslint/no-unused-vars
               console.log(`[rex-passive-data-kit] Data point saved successfully: ${point.generatorId}.`)
