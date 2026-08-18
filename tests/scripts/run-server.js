@@ -4,8 +4,12 @@ import { Buffer } from 'node:buffer';
 import express from 'express'
 import multer from 'multer'
 
+import { DataPointStore } from './data-point-store.js'
+
 const app = express();
 const port = 9090;
+
+const dataPointStore = new DataPointStore()
 
 // Registered ahead of the JSON/urlencoded parsers and scoped to the v3 routes:
 // those receive raw gzip bytes, which express.json() would otherwise consume
@@ -90,6 +94,8 @@ app.post('/data/add-bundle.json', upload.none(), (request, response) => {
     }
   }
 
+  dataPointStore.record(reply.payload)
+
   response.send(JSON.stringify(reply, null, '  '))
 })
 
@@ -141,6 +147,8 @@ app.put('/v3/data/bundle', (request, response) => {
       return
     }
   }
+
+  dataPointStore.record(payload)
 
   response.statusCode = 200;
   response.send(JSON.stringify({
@@ -196,11 +204,69 @@ app.post('/data/add-point.json', upload.none(), (request, response) => {
     return
   }
 
+  dataPointStore.record(dataPoint)
+
   const replyMessage = {
     message: 'Data point added successfully.'
   }
 
   response.send(JSON.stringify(replyMessage, null, '  '))
+})
+
+// Lets a test assert on what the server received rather than on what the client
+// reported sending. `timestamp` is the point's
+// `passive-data-metadata.timestamp` in epoch seconds; `tolerance` widens the
+// match for callers that cannot pin an exact value.
+app.get('/data/points.json', (request, response) => {
+  response.setHeader('Content-Type', 'application/json')
+
+  if (request.query.timestamp === undefined) {
+    response.statusCode = 400;
+    response.send(JSON.stringify({'error': 'Query parameter "timestamp" is required.'}))
+
+    return
+  }
+
+  const timestamp = Number.parseFloat(request.query.timestamp)
+
+  if (Number.isNaN(timestamp)) {
+    response.statusCode = 400;
+    response.send(JSON.stringify({'error': `Query parameter "timestamp" is not a number: ${request.query.timestamp}`}))
+
+    return
+  }
+
+  const tolerance = request.query.tolerance === undefined ? 0 : Number.parseFloat(request.query.tolerance)
+
+  if (Number.isNaN(tolerance)) {
+    response.statusCode = 400;
+    response.send(JSON.stringify({'error': `Query parameter "tolerance" is not a number: ${request.query.tolerance}`}))
+
+    return
+  }
+
+  const points = dataPointStore.findByTimestamp(timestamp, tolerance)
+
+  response.statusCode = 200;
+  response.send(JSON.stringify({
+    'timestamp': timestamp,
+    'tolerance': tolerance,
+    'count': points.length,
+    'points': points
+  }, null, '  '))
+})
+
+// The server outlives any single test, so a test that counts points clears
+// first rather than depending on what ran before it.
+app.delete('/data/points.json', (request, response) => {
+  response.setHeader('Content-Type', 'application/json')
+
+  const cleared = dataPointStore.size
+
+  dataPointStore.clear()
+
+  response.statusCode = 200;
+  response.send(JSON.stringify({'cleared': cleared}))
 })
 
 app.listen(port, () => {

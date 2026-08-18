@@ -20,8 +20,13 @@ import { test, expect } from './fixtures';
 
 const ISO_STAMP = '2026-04-30T17:30:08.089696768Z'
 
+// Pins `passive-data-metadata.timestamp` so the server-side test can retrieve
+// exactly this point. stampPointMetadata derives that field as `date / 1000`.
+const POINT_DATE_MS = 1777570208089
+const POINT_TIMESTAMP = POINT_DATE_MS / 1000
+
 const enqueueOpaquePoint = (serviceWorker, generatorId: string) => {
-  return serviceWorker.evaluate(async ({ generatorId, iso }) => {
+  return serviceWorker.evaluate(async ({ generatorId, iso, dateMs }) => {
     const pdk = self.rexPDKPlugin
 
     const waitFor = (condition: () => boolean, timeoutMs: number, label: string) => {
@@ -53,17 +58,23 @@ const enqueueOpaquePoint = (serviceWorker, generatorId: string) => {
     await waitFor(() => pdk.database !== null && pdk.uploadUrl !== '', 10000, 'database open and configuration loaded')
 
     // Stands in for Temporal.Instant: structured clone sees nothing to copy,
-    // JSON serialization reaches the value through the prototype.
+    // JSON serialization reaches the value through the prototype. Nested under
+    // `value` to match a DateString, which holds its instant that way.
     const opaqueStamp = Object.create({ toJSON: () => iso })
 
     if (Object.keys(opaqueStamp).length !== 0) {
       throw new Error('Test setup invalid: opaqueStamp must have no own enumerable properties.')
     }
 
-    // Mirrors the post-content-processing shape of a DateString: the walker in
-    // rex-content-processing rebuilds objects as plain ones, so the DateString
-    // prototype is already gone and only the inner stamp carries toJSON.
-    pdk.enqueueDataPoint(generatorId, {
+    const before = await countPoints()
+
+    // Goes in the way a real producer does: rex-core's dispatchEvent fans the
+    // event out to every registered module, so this covers logEvent and the
+    // content-processing pass rather than starting at enqueueDataPoint. The
+    // spider reaches PDK by exactly this route.
+    self.rexDispatchEvent({
+      name: generatorId,
+      date: dateMs,
       ended: {
         value: opaqueStamp,
         originalValue: ''
@@ -72,14 +83,14 @@ const enqueueOpaquePoint = (serviceWorker, generatorId: string) => {
 
     const started = Date.now()
 
-    while ((await countPoints()) < 1) {
-      if (Date.now() - started > 5000) {
+    while ((await countPoints()) <= before) {
+      if (Date.now() - started > 8000) {
         throw new Error('Timed out waiting for the point to persist to IndexedDB.')
       }
 
       await new Promise((resolve) => self.setTimeout(resolve, 25))
     }
-  }, { generatorId, iso: ISO_STAMP })
+  }, { generatorId, iso: ISO_STAMP, dateMs: POINT_DATE_MS })
 }
 
 test('a point value reachable only through toJSON survives the persist to IndexedDB', async ({serviceWorker}) => {
@@ -105,23 +116,22 @@ test('a point value reachable only through toJSON survives the persist to Indexe
   expect(persisted['ended']['originalValue']).toEqual('')
 })
 
-test('a point value reachable only through toJSON survives the upload payload', async ({serviceWorker}) => {
-  await enqueueOpaquePoint(serviceWorker, 'opaque-upload-test')
+test('the value the server receives is the timestamp, not an empty object', async ({serviceWorker, request}) => {
+  await enqueueOpaquePoint(serviceWorker, 'opaque-server-test')
 
-  const uploaded = await serviceWorker.evaluate(async (generatorId) => {
-    const responses = await self.rexPDKPlugin.uploadQueuedDataPoints(() => {})
+  await serviceWorker.evaluate(() => self.rexPDKPlugin.uploadQueuedDataPoints(() => {}))
 
-    for (const response of responses) {
-      for (const point of response.payload) {
-        if (point['passive-data-metadata']['generator-id'] === generatorId) {
-          return point
-        }
-      }
-    }
+  // Asking the server what it stored closes the loop the in-worker assertions
+  // leave open: a point can look correct on its way out and still land empty.
+  const response = await request.get(`/data/points.json?timestamp=${POINT_TIMESTAMP}`)
 
-    return null
-  }, 'opaque-upload-test')
+  expect(response.ok()).toBeTruthy()
 
-  expect(uploaded).not.toBeNull()
-  expect(uploaded['ended']['value']).toEqual(ISO_STAMP)
+  const body = await response.json()
+
+  const received = body.points.find((point) => point['passive-data-metadata']['generator-id'] === 'opaque-server-test')
+
+  expect(received).toBeDefined()
+  expect(received['ended']['value']).toEqual(ISO_STAMP)
+  expect(received['ended']['originalValue']).toEqual('')
 })
