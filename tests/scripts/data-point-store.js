@@ -13,6 +13,11 @@ export class DataPointStore {
 
   // `dataPoints` is the decoded upload payload: an array for the bundle
   // endpoints, a single point for the add-point endpoint.
+  //
+  // Callers record only after a payload has passed validation. The store stands
+  // for what the server persisted, and a rejected bundle was never written, so
+  // keeping it would report points the server does not have. Do not move these
+  // calls ahead of the 400 paths.
   record(dataPoints) {
     for (const dataPoint of [dataPoints].flat()) {
       this.points.push(dataPoint)
