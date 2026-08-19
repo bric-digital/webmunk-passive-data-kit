@@ -2,31 +2,32 @@ import { test, expect } from './fixtures';
 
 // These tests pin the defect fixed in 6341080: persisting a point with
 // `objectStore.add(point)` handed the raw object to the structured clone
-// algorithm, which copies only own enumerable properties. A value that keeps
-// its state in private slots and exposes it through `toJSON` on the prototype
-// therefore cloned to `{}` — without raising DataCloneError. The point was
-// saved and uploaded looking well-formed, with the value silently gone.
+// algorithm, which copies only own enumerable properties. A rex-types
+// `DateString` holds its instant in a `Temporal.Instant` from
+// @js-temporal/polyfill, whose state lives in private slots, so the clone
+// wrote `{ value: {}, originalValue: '' }` and the timestamp was gone.
 //
-// This is how every rex-types `DateString` lost its timestamp: it wraps a
-// `Temporal.Instant` from @js-temporal/polyfill, which has no own enumerable
-// properties. rex-spider-chatgpt writes three of them per conversation
-// (`started`, `ended`, and `when` on every turn), so conversation timing was
-// blank in the collected data while the conversations themselves arrived fine.
+// Nothing raised DataCloneError. The point persisted, uploaded, and arrived at
+// the server looking well formed, which is why this ran unnoticed. Asserting on
+// the value is the only thing that catches it.
 //
-// `opaqueStamp` below reproduces that shape without pulling in the polyfill:
-// no own enumerable properties, value reachable only via prototype `toJSON`.
-// Guard when editing: if it ever gains an own enumerable property, structured
-// clone starts preserving it and these tests pass against the defect.
+// rex-spider-chatgpt writes three DateStrings per conversation (`started`,
+// `ended`, and `when` on every turn), and all of them arrived empty.
+//
+// The tests use the real DateString rather than a local stand-in. A stand-in
+// can only encode what we already believe the type does; if DateString or the
+// polyfill changes shape, an imitation keeps passing while collection breaks.
 
-const ISO_STAMP = '2026-04-30T17:30:08.089696768Z'
+// Epoch seconds, the form ChatGPT emits and DateString accepts.
+const CONVERSATION_EPOCH_SECONDS = 1777570208.089697
 
-// Pins `passive-data-metadata.timestamp` so the server-side test can retrieve
-// exactly this point. stampPointMetadata derives that field as `date / 1000`.
+// stampPointMetadata derives `passive-data-metadata.timestamp` as `date / 1000`,
+// so pinning `date` is what lets the server-side test retrieve this point.
 const POINT_DATE_MS = 1777570208089
 const POINT_TIMESTAMP = POINT_DATE_MS / 1000
 
-const enqueueOpaquePoint = (serviceWorker, generatorId: string) => {
-  return serviceWorker.evaluate(async ({ generatorId, iso, dateMs }) => {
+const dispatchConversationPoint = (serviceWorker, generatorId: string) => {
+  return serviceWorker.evaluate(async ({ generatorId, epochSeconds, dateMs }) => {
     const pdk = self.rexPDKPlugin
 
     const waitFor = (condition: () => boolean, timeoutMs: number, label: string) => {
@@ -57,13 +58,12 @@ const enqueueOpaquePoint = (serviceWorker, generatorId: string) => {
 
     await waitFor(() => pdk.database !== null && pdk.uploadUrl !== '', 10000, 'database open and configuration loaded')
 
-    // Stands in for Temporal.Instant: structured clone sees nothing to copy,
-    // JSON serialization reaches the value through the prototype. Nested under
-    // `value` to match a DateString, which holds its instant that way.
-    const opaqueStamp = Object.create({ toJSON: () => iso })
+    const stamp = new self.rexDateString(epochSeconds)
 
-    if (Object.keys(opaqueStamp).length !== 0) {
-      throw new Error('Test setup invalid: opaqueStamp must have no own enumerable properties.')
+    // Fails loudly if DateString stops being the thing this test assumes: a
+    // value the structured clone algorithm cannot carry.
+    if (Object.keys(stamp.value).length !== 0) {
+      throw new Error('Test setup invalid: DateString.value now has own enumerable properties, so structured clone would preserve it and this test could no longer fail.')
     }
 
     const before = await countPoints()
@@ -71,14 +71,12 @@ const enqueueOpaquePoint = (serviceWorker, generatorId: string) => {
     // Goes in the way a real producer does: rex-core's dispatchEvent fans the
     // event out to every registered module, so this covers logEvent and the
     // content-processing pass rather than starting at enqueueDataPoint. The
-    // spider reaches PDK by exactly this route.
+    // spider reaches PDK by exactly this route, with these field names.
     self.rexDispatchEvent({
       name: generatorId,
       date: dateMs,
-      ended: {
-        value: opaqueStamp,
-        originalValue: ''
-      }
+      started: stamp,
+      ended: stamp
     })
 
     const started = Date.now()
@@ -90,11 +88,19 @@ const enqueueOpaquePoint = (serviceWorker, generatorId: string) => {
 
       await new Promise((resolve) => self.setTimeout(resolve, 25))
     }
-  }, { generatorId, iso: ISO_STAMP, dateMs: POINT_DATE_MS })
+
+    return stamp.toJSON()
+  }, { generatorId, epochSeconds: CONVERSATION_EPOCH_SECONDS, dateMs: POINT_DATE_MS })
 }
 
-test('a point value reachable only through toJSON survives the persist to IndexedDB', async ({serviceWorker}) => {
-  await enqueueOpaquePoint(serviceWorker, 'opaque-persist-test')
+// No content processor is registered in this harness, so the DateString reaches
+// serialization with its prototype intact and its own toJSON flattens it to an
+// ISO string. A consumer that registers one (Keystone registers openredaction)
+// gets `{ value: <iso>, originalValue: '' }` instead, because the processing
+// walker rebuilds objects as plain ones and drops the prototype. Either way the
+// instant survives, and either way the defect replaced it with `{}`.
+test('a DateString on a dispatched point survives the persist to IndexedDB', async ({serviceWorker}) => {
+  const expectedIso = await dispatchConversationPoint(serviceWorker, 'datestring-persist-test')
 
   const persisted = await serviceWorker.evaluate(async (generatorId) => {
     return new Promise((resolve) => {
@@ -106,18 +112,15 @@ test('a point value reachable only through toJSON survives the persist to Indexe
         resolve(record === undefined ? null : record.dataPoint)
       }
     })
-  }, 'opaque-persist-test')
+  }, 'datestring-persist-test')
 
   expect(persisted).not.toBeNull()
-
-  // The defect wrote `{}` here rather than failing, so asserting on the value
-  // is the only thing that catches it.
-  expect(persisted['ended']['value']).toEqual(ISO_STAMP)
-  expect(persisted['ended']['originalValue']).toEqual('')
+  expect(persisted['started']).toEqual(expectedIso)
+  expect(persisted['ended']).toEqual(expectedIso)
 })
 
-test('the value the server receives is the timestamp, not an empty object', async ({serviceWorker, request}) => {
-  await enqueueOpaquePoint(serviceWorker, 'opaque-server-test')
+test('the DateString the server receives is the instant, not an empty object', async ({serviceWorker, request}) => {
+  const expectedIso = await dispatchConversationPoint(serviceWorker, 'datestring-server-test')
 
   await serviceWorker.evaluate(() => self.rexPDKPlugin.uploadQueuedDataPoints(() => {}))
 
@@ -129,9 +132,9 @@ test('the value the server receives is the timestamp, not an empty object', asyn
 
   const body = await response.json()
 
-  const received = body.points.find((point) => point['passive-data-metadata']['generator-id'] === 'opaque-server-test')
+  const received = body.points.find((point) => point['passive-data-metadata']['generator-id'] === 'datestring-server-test')
 
   expect(received).toBeDefined()
-  expect(received['ended']['value']).toEqual(ISO_STAMP)
-  expect(received['ended']['originalValue']).toEqual('')
+  expect(received['started']).toEqual(expectedIso)
+  expect(received['ended']).toEqual(expectedIso)
 })

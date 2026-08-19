@@ -94,7 +94,7 @@ app.post('/data/add-bundle.json', upload.none(), (request, response) => {
     }
   }
 
-  dataPointStore.record(reply.payload)
+  dataPointStore.recordPoints(reply.payload)
 
   response.send(JSON.stringify(reply, null, '  '))
 })
@@ -148,7 +148,7 @@ app.put('/v3/data/bundle', (request, response) => {
     }
   }
 
-  dataPointStore.record(payload)
+  dataPointStore.recordPoints(payload)
 
   response.statusCode = 200;
   response.send(JSON.stringify({
@@ -204,7 +204,7 @@ app.post('/data/add-point.json', upload.none(), (request, response) => {
     return
   }
 
-  dataPointStore.record(dataPoint)
+  dataPointStore.recordPoint(dataPoint)
 
   const replyMessage = {
     message: 'Data point added successfully.'
