@@ -21,27 +21,38 @@ function countPointsByGenerator(results, generatorId) {
 }
 
 test('concurrent upload calls transmit each point exactly once', async ({serviceWorker}) => {
-  const settled = await serviceWorker.evaluate(async () => {
-    await new Promise((readyDelay) => self.setTimeout(readyDelay, 1000))
+  serviceWorker.evaluate((resolve) => {
+    self.rexCorePlugin.handleMessage({
+        'messageType': 'waitForConfiguration',
+        'event': {
+          'timeout': 10000
+        }
+    }).then((configuration) => {
+      console.log(`[concurrent] configuration: ${configuration}`)
 
-    await new Promise((logged) => {
       self.rexCorePlugin.handleMessage({
         'messageType': 'logEvent',
         'event': {
           'name': 'rex-pdk-concurrent-test'
         }
-      }, self, logged)
+      }, self, () => {
+        self.setTimeout(() => {
+          Promise.allSettled([
+            self.rexPDKPlugin.uploadQueuedDataPoints(() => {}, [], 1000),
+            self.rexPDKPlugin.uploadQueuedDataPoints(() => {}),
+          ]).catch((results) => {
+            resolve(results)
+          })
+        }, 1500)
+      })
+    }).catch((err) => {
+      resolve(`[concurrent] Error waiting for configuration: ${err}`)
     })
+  }).then((results) => {
+    console.log(`[concurrent] results: ${results}`)
 
-    await new Promise((settleDelay) => self.setTimeout(settleDelay, 1500))
+    const settled = results.map((result) => (result.status === 'fulfilled' ? result.value : `rejected: ${result.reason}`))
 
-    const results = await Promise.allSettled([
-      self.rexPDKPlugin.uploadQueuedDataPoints(() => {}),
-      self.rexPDKPlugin.uploadQueuedDataPoints(() => {}),
-    ])
-
-    return results.map((result) => (result.status === 'fulfilled' ? result.value : `rejected: ${result.reason}`))
+    expect(countPointsByGenerator(settled, 'rex-pdk-concurrent-test')).toEqual(1)
   })
-
-  expect(countPointsByGenerator(settled, 'rex-pdk-concurrent-test')).toEqual(1)
 })

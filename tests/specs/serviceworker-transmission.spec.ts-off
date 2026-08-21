@@ -12,7 +12,7 @@ test('Service worker transmission tests', async ({serviceWorker}) => {
                 'name': 'rex-pdk-test'
               }
             }, this, (loggedCount) => {
-              setTimeout(() => {
+              self.setTimeout(() => {
                 self.rexPDKPlugin.uploadQueuedDataPoints((remaining: number) => {},).then((uploadResponse) => {
                   testResolve(uploadResponse)
                 }, (error) => {
@@ -24,20 +24,25 @@ test('Service worker transmission tests', async ({serviceWorker}) => {
             })
           }
 
-          self.setTimeout(doTest, 1000)
-
-          // const deletePdkDb = indexedDB.deleteDatabase("passive_data_kit")
-
-          // deletePdkDb.onerror = (event) => {
-          //   testResolve('db error')
-          // }
-
-          // deletePdkDb.onsuccess = (event) => {
-          //   testResolve('db success')
-          // }
+          self.setTimeout(() => {
+            try {
+              self.rexCorePlugin.handleMessage({
+                'messageType': 'waitForConfiguration',
+                'event': {
+                  'timeout': 5000
+                },
+              }, this, (configuration) => {
+                doTest()
+              })
+            } catch (err) {
+              testResolve(`waitForConfiguration error: ${err}`)
+            }
+          }, 2000)
         })
       })
       .then((workerResponse) => {
+        // console.log(`[transmission] workerResponse: "${workerResponse}" -- ${typeof workerResponse} -- ${JSON.stringify(workerResponse)}`)
+
         if ((typeof workerResponse) == 'string') {
           expect(workerResponse).toEqual(0)
         } else {

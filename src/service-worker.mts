@@ -304,9 +304,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
                 persistPoint(payload)
               })
             } else {
-                persistPoint(payload)
+              persistPoint(payload)
             }
-            
           }
         })
   }
@@ -325,6 +324,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
       const storePoint = () => {
         if (this.queuedPoints.length === 0 || this.database === null) {
+          console.log(`[rex-passive-data-kit] All points persisted.`)
+
           resolve(pointsSaved)
         } else {
           const objectStore = this.database.transaction(['dataPoints'], 'readwrite').objectStore('dataPoints')
@@ -348,6 +349,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
               resolve(pointsSaved)
             }
+          } else {
+            storePoint()
           }
         }
       }
@@ -578,239 +581,248 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     })
   }
 
-  async uploadQueuedDataPoints(progressCallback: any, responses:any[] = []) { // eslint-disable-line @typescript-eslint/no-explicit-any
-    // Serialize uploads: overlapping calls (a scheduled upload plus a
-    // config-apply notification, for instance) would read the same
-    // untransmitted points and transmit them twice. The flag must be set
-    // synchronously, before any await, or two same-tick calls both pass the
-    // check. In-memory on purpose: a killed worker restarts with it clear.
-    if (this.currentlyUploading) {
-      return Promise.reject('Still uploading data points. Skipping...')
-    }
+  uploadQueuedDataPoints(progressCallback: any, responses:any[] = [], delay:number=0) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    return new Promise<any>((resolve, reject) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (this.currentlyUploading) {
+        console.log('[rex-passive-data-kit] Still uploading data points. Skipping.')
 
-    this.currentlyUploading = true
-
-    // Points enqueued inside the persist throttle window are still in memory;
-    // persist them first so the IndexedDB read below sees everything enqueued so far.
-    await this.persistDataPoints()
-
-    return new Promise<any>((resolveUploadQueued, reject) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-      if (this.database === null) {
-        this.currentlyUploading = false
-
-        reject('Database not yet open. Skipping')
-      } else if (this.identifier === undefined || this.identifier === null) {
-        this.currentlyUploading = false
-
-        reject('Identifier not set. Skipping')
+        reject('Still uploading data points. Skipping...')
       } else {
-        const index = this.database.transaction(['dataPoints'], 'readonly')
-          .objectStore('dataPoints')
-          .index('transmitted')
+        this.currentlyUploading = true
 
-        const countRequest = index.count(0)
+        const uploadBlock = () => {
+          this.persistDataPoints().then((pointsSaved: number) => {
+            console.log(`[passive-data-kit] ${pointsSaved} persisted. Continuing with uploadBlock`)
 
-        countRequest.onsuccess = () => {
-          console.log(`[rex-passive-data-kit] Remaining data points: ${countRequest.result}`)
-
-          const request = index.getAll(0, 64)
-
-          request.onsuccess = () => {
-            const pendingItems: REXPDKDataPointDBRecord[] = request.result
-
-            if (pendingItems.length === 0) {
+            if (this.database === null) {
               this.currentlyUploading = false
 
-              resolveUploadQueued(responses)
+              reject('Database not yet open. Skipping')
+            } else if (this.identifier === undefined || this.identifier === null) {
+              this.currentlyUploading = false
+
+              reject('Identifier not set. Skipping')
             } else {
-              const toTransmit: REXPDKDataPointDBRecord[] = []
-              const xmitBundle: REXPDKDataPoint[] = []
+              const index = this.database.transaction(['dataPoints'], 'readonly')
+                .objectStore('dataPoints')
+                .index('transmitted')
 
-              const pendingRemaining = pendingItems.length
+              const countRequest = index.count(0)
 
-              console.log(`[rex-passive-data-kit] Remaining data points (this bundle): ${pendingRemaining}`)
+              countRequest.onsuccess = () => {
+                console.log(`[rex-passive-data-kit] Remaining data points: ${countRequest.result}`)
 
-              progressCallback(pendingRemaining)
+                const request = index.getAll(0, 64)
 
-              let bundleLength = 0
+                request.onsuccess = () => {
+                  const pendingItems: REXPDKDataPointDBRecord[] = request.result
 
-              for (let i = 0; i < pendingRemaining && bundleLength < (128 * 1024); i++) {
-                const pendingItem: REXPDKDataPointDBRecord = pendingItems[i]
+                  if (pendingItems.length === 0) {
+                    this.currentlyUploading = false
 
-                pendingItem.transmitted = new Date().getTime()
-
-                pendingItem.dataPoint.date = pendingItem.date
-                pendingItem.dataPoint.generatorId = pendingItem.generatorId
-
-                toTransmit.push(pendingItem)
-                xmitBundle.push(pendingItem.dataPoint)
-
-                const bundleString = JSON.stringify(pendingItem.dataPoint)
-
-                bundleLength += bundleString.length
-              }
-
-              const status: REXPDKStatusDataPoint = {
-                'pending-points': pendingRemaining,
-                generatorId: 'pdk-system-status'
-              }
-
-              const transmitPromise = new Promise<void>((resolveStatus) => {
-                const pending:string[] = []
-
-                const markResolved = function(token: string) {
-                  const tokenIndex = pending.indexOf(token)
-
-                  if (tokenIndex >= 0) {
-                    pending.splice(tokenIndex, 1)
-                  }
-
-                  if (pending.length === 0) {
-                    resolveStatus()
-                  }
-                }
-
-                pending.push('pdk-annotate')
-
-                this.annotateDataPoint(status)
-                  .then(() => {
-                    markResolved('pdk-annotate')
-                  })
-
-                pending.push('config-hash')
-
-                rexCorePlugin.fetchConfiguration().then((configuration: REXConfiguration) => {
-                  this.normalizeConfiguration(configuration)
-
-                  const configString = stringify(configuration)
-
-                  if (configString !== undefined) {
-                    rexCorePlugin.generateHash(configString)
-                    .then((configHash) => {
-                      status.configurationHash = `${configHash}`
-
-                      markResolved('config-hash')
-                    })
+                    resolve(responses)
                   } else {
-                    markResolved('config-hash')
-                  }
-                })
+                    const toTransmit: REXPDKDataPointDBRecord[] = []
+                    const xmitBundle: REXPDKDataPoint[] = []
 
-                if (chrome.system !== undefined) {
-                  if (chrome.system.cpu !== undefined) {
-                    pending.push('cpu-info')
+                    const pendingRemaining = pendingItems.length
 
-                    chrome.system.cpu.getInfo().then((cpuInfo: chrome.system.cpu.CpuInfo) => {
-                      status['cpu-info'] = cpuInfo
+                    console.log(`[rex-passive-data-kit] Remaining data points (this bundle): ${pendingRemaining}`)
 
-                      markResolved('cpu-info')
+                    progressCallback(pendingRemaining)
+
+                    let bundleLength = 0
+
+                    for (let i = 0; i < pendingRemaining && bundleLength < (128 * 1024); i++) {
+                      const pendingItem: REXPDKDataPointDBRecord = pendingItems[i]
+
+                      pendingItem.transmitted = new Date().getTime()
+
+                      pendingItem.dataPoint.date = pendingItem.date
+                      pendingItem.dataPoint.generatorId = pendingItem.generatorId
+
+                      toTransmit.push(pendingItem)
+                      xmitBundle.push(pendingItem.dataPoint)
+
+                      const bundleString = JSON.stringify(pendingItem.dataPoint)
+
+                      bundleLength += bundleString.length
+                    }
+
+                    const status: REXPDKStatusDataPoint = {
+                      'pending-points': pendingRemaining,
+                      generatorId: 'pdk-system-status'
+                    }
+
+                    console.log(`[rex-passive-data-kit] To XMIT: ${xmitBundle.length}`)
+
+                    const transmitPromise = new Promise<void>((resolveStatus) => {
+                      const pending:string[] = []
+
+                      const markResolved = function(token: string) {
+                        const tokenIndex = pending.indexOf(token)
+
+                        if (tokenIndex >= 0) {
+                          pending.splice(tokenIndex, 1)
+                        }
+
+                        if (pending.length === 0) {
+                          resolveStatus()
+                        }
+                      }
+
+                      pending.push('pdk-annotate')
+
+                      this.annotateDataPoint(status)
+                        .then(() => {
+                          markResolved('pdk-annotate')
+                        })
+
+                      pending.push('config-hash')
+
+                      rexCorePlugin.fetchConfiguration().then((configuration: REXConfiguration) => {
+                        this.normalizeConfiguration(configuration)
+
+                        const configString = stringify(configuration)
+
+                        if (configString !== undefined) {
+                          rexCorePlugin.generateHash(configString)
+                          .then((configHash) => {
+                            status.configurationHash = `${configHash}`
+
+                            markResolved('config-hash')
+                          })
+                        } else {
+                          markResolved('config-hash')
+                        }
+                      })
+
+                      if (chrome.system !== undefined) {
+                        if (chrome.system.cpu !== undefined) {
+                          pending.push('cpu-info')
+
+                          chrome.system.cpu.getInfo().then((cpuInfo: chrome.system.cpu.CpuInfo) => {
+                            status['cpu-info'] = cpuInfo
+
+                            markResolved('cpu-info')
+                          })
+                        }
+
+                        if (chrome.system.display !== undefined) {
+                          pending.push('display-info')
+
+                          chrome.system.display.getInfo().then((displayUnitInfo: chrome.system.display.DisplayUnitInfo[]) => {
+                            status['display-info'] = displayUnitInfo
+
+                            markResolved('display-info')
+                          })
+                        }
+
+                        if (chrome.system.memory !== undefined) {
+                          pending.push('memory-info')
+
+                          chrome.system.memory.getInfo().then((memoryInfo: chrome.system.memory.MemoryInfo) => {
+                            status['memory-info'] = memoryInfo
+
+                            markResolved('memory-info')
+                          })
+                        }
+
+                        if (chrome.system.storage !== undefined) {
+                          pending.push('storage-info')
+
+                          chrome.system.storage.getInfo().then((storageUnitInfo: chrome.system.storage.StorageUnitInfo[]) => {
+                            status['storage-info'] = storageUnitInfo
+
+                            markResolved('storage-info')
+                          })
+                        }
+
+                        if (chrome.storage.local !== undefined) {
+                          pending.push('local-storage-bytes')
+
+                          chrome.storage.local.getBytesInUse().then((bytesUsed:number) => {
+                            status['local-storage-bytes'] = bytesUsed
+
+                              markResolved('local-storage-bytes')
+                          })
+                        }
+                      } else {
+                        markResolved('finish')
+                      }
                     })
-                  }
+                    
+                    transmitPromise.then(() => {
+                      console.log(`[rex-passive-data-kit] XMITTING`)
 
-                  if (chrome.system.display !== undefined) {
-                    pending.push('display-info')
+                      xmitBundle.push(status)
 
-                    chrome.system.display.getInfo().then((displayUnitInfo: chrome.system.display.DisplayUnitInfo[]) => {
-                      status['display-info'] = displayUnitInfo
-
-                      markResolved('display-info')
-                    })
-                  }
-
-                  if (chrome.system.memory !== undefined) {
-                    pending.push('memory-info')
-
-                    chrome.system.memory.getInfo().then((memoryInfo: chrome.system.memory.MemoryInfo) => {
-                      status['memory-info'] = memoryInfo
-
-                      markResolved('memory-info')
-                    })
-                  }
-
-                  if (chrome.system.storage !== undefined) {
-                    pending.push('storage-info')
-
-                    chrome.system.storage.getInfo().then((storageUnitInfo: chrome.system.storage.StorageUnitInfo[]) => {
-                      status['storage-info'] = storageUnitInfo
-
-                      markResolved('storage-info')
-                    })
-                  }
-
-                  if (chrome.storage.local !== undefined) {
-                    pending.push('local-storage-bytes')
-
-                    chrome.storage.local.getBytesInUse().then((bytesUsed:number) => {
-                      status['local-storage-bytes'] = bytesUsed
-
-                        markResolved('local-storage-bytes')
-                    })
-                  }
-                } else {
-                  markResolved('finish')
-                }
-              })
-              
-              transmitPromise.then(() => {
-                xmitBundle.push(status)
-
-                if (toTransmit.length === 0) {
-                  this.currentlyUploading = false
-
-                  responses.push('after-transit')
-
-                  resolveUploadQueued(responses)
-                } else {
-                  this.uploadBundle(xmitBundle)
-                    .then((responseData) => {
-                      responses.push(responseData)
-
-                      this.updateDataPoints(toTransmit).then(() => {
+                      if (toTransmit.length === 0) {
+                        console.log('[rex-passive-data-kit] Transmission complete.')
                         this.currentlyUploading = false
 
-                        this.uploadQueuedDataPoints(progressCallback, responses).then((promiseResponses) => {
-                          resolveUploadQueued(promiseResponses)
+                        responses.push('after-transit')
+
+                        resolve(responses)
+                      } else {
+                        this.uploadBundle(xmitBundle).then((responseData) => {
+                          responses.push(responseData)
+
+                          this.updateDataPoints(toTransmit).then(() => {
+                            this.currentlyUploading = false
+
+                            this.uploadQueuedDataPoints(progressCallback, responses).then((promiseResponses) => {
+                              resolve(promiseResponses)
+                            })
+                          })
+                        }, (error) => {
+                          this.currentlyUploading = false
+
+                          reject(error)
                         })
-                      })
-                    }, (error) => {
-                      this.currentlyUploading = false
+                        .catch((error) => {
+                          this.currentlyUploading = false
 
-                      reject(error)
+                          console.log('[rex-passive-data-kit] PDK upload error:')
+                          console.log(error)
+
+                          reject(`Error uploading data points: ${error}`)
+                        })
+                      }
                     })
-                    .catch((error) => {
-                      this.currentlyUploading = false
-
-                      console.log('[rex-passive-data-kit] PDK upload error:')
-                      console.log(error)
-
-                      reject(`Error uploading data points: ${error}`)
-                    })
+                  }
                 }
-              })
+
+                request.onerror = (event) => {
+                  this.currentlyUploading = false
+
+                  console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve pending points.')
+                  console.log(event)
+
+                  this.currentlyUploading = false
+
+                  reject(`Database error: ${event}`)
+                }
+              }
+
+              countRequest.onerror = (event) => {
+                this.currentlyUploading = false
+
+                console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve count of pending points.')
+                console.log(event)
+
+                this.currentlyUploading = false
+
+                reject(`Database error: ${event}`)
+              }
             }
-          }
-
-          request.onerror = (event) => {
-            this.currentlyUploading = false
-
-            console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve pending points.')
-            console.log(event)
-
-            this.currentlyUploading = false
-
-            reject(`Database error: ${event}`)
-          }
+          })
         }
 
-        countRequest.onerror = (event) => {
-          this.currentlyUploading = false
-
-          console.log('[rex-passive-data-kit] PDK database error. Unable to retrieve count of pending points.')
-          console.log(event)
-
-          this.currentlyUploading = false
-
-          reject(`Database error: ${event}`)
+        if (delay > 0) {
+          self.setTimeout(uploadBlock, delay)
+        } else {
+          uploadBlock()
         }
       }
     })

@@ -3,7 +3,7 @@
 import { test, expect } from './fixtures';
 
 const V3_ENDPOINT = 'http://localhost:9090/v3/data/bundle'
-const V3_EMPTY_REPLY_ENDPOINT = 'http://localhost:9090/v3/data/bundle-empty-reply'
+const V3_EMPTY_REPLY_ENDPOINT = 'http://localhost:9090/data/add-bundle-empty-reply.json'
 
 // Reconfigure the module in-place rather than editing tests/extension/config.json,
 // which the POST specs share.
@@ -14,42 +14,60 @@ const V3_EMPTY_REPLY_ENDPOINT = 'http://localhost:9090/v3/data/bundle-empty-repl
 // and this asserts against an empty response set.
 const uploadWithConfiguration = (serviceWorker, configuration) => {
   return serviceWorker.evaluate(async (pdkConfiguration) => {
-    const sleep = (ms) => new Promise((wake) => setTimeout(wake, ms))
+    return new Promise((resolve) => {
+      self.setTimeout(() => {
+        self.rexCorePlugin.handleMessage({
+          'messageType': 'waitForConfiguration',
+          'event': {
+            'timeout': 5000
+          },
+        }, this, (configuration) => {
+          self.rexPDKPlugin.updateConfiguration(pdkConfiguration)
 
-    await sleep(2000)
+          self.rexCorePlugin.handleMessage({
+            'messageType': 'logEvent',
+            'event': {
+              'name': 'rex-pdk-v3-test'
+            }
+          }, this, (response) => {
+            let remaining:number = 10
 
-    self.rexPDKPlugin.updateConfiguration(pdkConfiguration)
+            const checkNext = () => {
+              if (remaining === 0) {
+                resolve( {ok: false, error: 'no bundle was uploaded after 10 attempts' })
+              } else {
+                console.log(`uploadWithConfiguration attempts remaining: ${remaining}`)
 
-    await new Promise((logged) => {
-      self.rexCorePlugin.handleMessage({
-        'messageType': 'logEvent',
-        'event': {
-          'name': 'rex-pdk-v3-test'
-        }
-      }, this, () => {
-        logged(undefined)
-      })
+                remaining = remaining - 1
+              
+                self.rexPDKPlugin.updateConfiguration(pdkConfiguration)
+
+                console.log(`uploadWithConfiguration: uploadQueuedDataPoints`)
+
+                self.rexPDKPlugin.uploadQueuedDataPoints()
+                  .then((response) => {
+                    console.log(`uploadWithConfiguration: response: ${JSON.stringify(response)} -- ${remaining}`)
+
+                    if (Array.isArray(response) && response.length > 0) {
+                      resolve({ ok: true, response })
+                    } else {
+                      self.setTimeout(checkNext, 1000)
+                    }
+                  }).catch((err) => {
+                    console.log(`uploadWithConfiguration: error on uploadQueuedDataPoints: ${err}`)
+
+                    self.setTimeout(checkNext, 1000)
+
+                    // resolve({ ok: false, error: `${err}`})
+                  })
+              }
+            }
+
+            checkNext()
+          })
+        })
+      }, 1000)
     })
-
-    for (let attempt = 0; attempt < 10; attempt++) {
-      await sleep(500)
-
-      // A concurrent upload holds the serialization guard; reconfigure each
-      // attempt so a refresh in between cannot revert the endpoint.
-      self.rexPDKPlugin.updateConfiguration(pdkConfiguration)
-
-      try {
-        const response = await self.rexPDKPlugin.uploadQueuedDataPoints(() => {})
-
-        if (Array.isArray(response) && response.length > 0) {
-          return { ok: true, response }
-        }
-      } catch (error) {
-        return { ok: false, error: `${error}` }
-      }
-    }
-
-    return { ok: false, error: 'no bundle was uploaded after 10 attempts' }
   }, configuration)
 }
 
@@ -100,6 +118,8 @@ test('v3 upload treats an empty 2xx reply as success', async ({ serviceWorker })
     endpoint_version: 'v3',
     authorization: { token: 'test-bearer-token' }
   })
+
+  console.log(`[v3-upload] result: "${result}" -- ${typeof result} -- ${JSON.stringify(result)}`)
 
   expect(result.ok, `upload failed: ${result.error}`).toBe(true)
   expect(result.response[0].added).toBe(true)

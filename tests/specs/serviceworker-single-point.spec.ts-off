@@ -19,10 +19,25 @@ test('Service worker single point transmission test', async ({serviceWorker}) =>
             })
           }
 
-          self.setTimeout(doTest, 1000)
+          self.setTimeout(() => {
+            try {
+              self.rexCorePlugin.handleMessage({
+                'messageType': 'waitForConfiguration',
+                'event': {
+                  'timeout': 5000
+                },
+              }, this, (configuration) => {
+                doTest()
+              })
+            } catch (err) {
+              testResolve(`waitForConfiguration error: ${err}`)
+            }
+          }, 2000)
         })
       })
       .then((workerResponse) => {
+        console.log(`[single-point] workerResponse: "${workerResponse}" -- ${typeof workerResponse} -- ${JSON.stringify(workerResponse)}`)
+
         expect(typeof workerResponse).toEqual('object')
         expect(workerResponse['logged']).toEqual(true)
         expect(workerResponse['message']).toEqual('Data point added successfully.')

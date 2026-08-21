@@ -14,11 +14,11 @@ rexCorePlugin.loadInitialConfigation('config.json')
   .then(function(result) {
     console.log(`Initial configuration loaded: ${result}`);
 
-    rexCorePlugin.refreshInterface()
+    // rexCorePlugin.refreshInterface()
   }, function (error) {
     console.log(`Error loading initial configuration: ${error}`);
 
-    rexCorePlugin.refreshInterface()
+    // rexCorePlugin.refreshInterface()
   })
 
 class MainScreenExtensionModule extends REXExtensionModule {

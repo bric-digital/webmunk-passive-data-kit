@@ -64,7 +64,7 @@ app.post('/data/add-bundle.json', upload.none(), (request, response) => {
     reply.payload = JSON.parse(request.body.payload)
   }
 
-  console.error(`/data/add-bundle.json: ${JSON.stringify(reply, null, '  ')}`)
+  // console.error(`/data/add-bundle.json: ${JSON.stringify(reply, null, '  ')}`)
 
   for (const dataPoint of reply.payload) {
     const metadata = dataPoint['passive-data-metadata']
@@ -120,7 +120,7 @@ app.put('/v3/data/bundle', (request, response) => {
 
   const payload = JSON.parse(Buffer.from(request.body).toString())
 
-  console.error(`/v3/data/bundle: ${JSON.stringify(payload, null, '  ')}`)
+  // console.error(`/v3/data/bundle: ${JSON.stringify(payload, null, '  ')}`)
 
   for (const dataPoint of payload) {
     const metadata = dataPoint['passive-data-metadata']
@@ -159,7 +159,7 @@ app.put('/v3/data/bundle', (request, response) => {
 
 // An edge cache ahead of the ingest endpoint answers a stored PUT with no body
 // at all; the client must read that as success, not as a parse failure.
-app.put('/v3/data/bundle-empty-reply', (request, response) => {
+app.put('/data/add-bundle-empty-reply.json', (request, response) => {
   response.statusCode = 200;
   response.send('')
 })
@@ -176,7 +176,7 @@ app.post('/data/add-point.json', upload.none(), (request, response) => {
     'post.payload': dataPoint
   }
 
-  console.error(`/data/add-point.json: ${JSON.stringify(reply, null, '  ')}`)
+  // console.error(`/data/add-point.json: ${JSON.stringify(reply, null, '  ')}`)
 
   const metadata = dataPoint['passive-data-metadata']
 
