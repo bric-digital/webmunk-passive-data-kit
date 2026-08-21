@@ -42,5 +42,8 @@
         "multer": "^2.2.0",
         "tweetnacl": "^1.0.3",
         "tweetnacl-util": "^0.15.1"
+    },
+    "devDependencies": {
+        "@bric/rex-types": "github:bric-digital/rex-types"
     }
 }
