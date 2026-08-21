@@ -1,140 +1,106 @@
 import { test, expect } from './fixtures';
 
-// These tests pin the defect fixed in 6341080: persisting a point with
+// Pins the defect fixed in 6341080: persisting a point with
 // `objectStore.add(point)` handed the raw object to the structured clone
 // algorithm, which copies only own enumerable properties. A rex-types
-// `DateString` holds its instant in a `Temporal.Instant` from
-// @js-temporal/polyfill, whose state lives in private slots, so the clone
-// wrote `{ value: {}, originalValue: '' }` and the timestamp was gone.
+// `DateString` keeps its instant in a `Temporal.Instant` from
+// @js-temporal/polyfill, whose state lives in private slots, so the clone wrote
+// `{ value: {}, originalValue: '' }` and the timestamp was gone. Nothing raised
+// DataCloneError, so the point persisted, uploaded, and arrived at the server
+// looking well formed. rex-spider-chatgpt writes three DateStrings per
+// conversation and all of them arrived empty.
 //
-// Nothing raised DataCloneError. The point persisted, uploaded, and arrived at
-// the server looking well formed, which is why this ran unnoticed. Asserting on
-// the value is the only thing that catches it.
-//
-// rex-spider-chatgpt writes three DateStrings per conversation (`started`,
-// `ended`, and `when` on every turn), and all of them arrived empty.
-//
-// The tests use the real DateString rather than a local stand-in. A stand-in
-// can only encode what we already believe the type does; if DateString or the
-// polyfill changes shape, an imitation keeps passing while collection breaks.
+// The point travels the queued path a real producer uses, because that is the
+// only path the defect lives on: `transmitSynchronousEvent` goes straight to
+// `transmitDataPoint` and never reaches `objectStore.add`, so a test built on
+// it would pass with or without the fix.
 
 // Epoch seconds, the form ChatGPT emits and DateString accepts.
 const CONVERSATION_EPOCH_SECONDS = 1777570208.089697
 
+// What a DateString holding that instant serializes to. Written out rather than
+// derived from the instance under test, so a change in either the type or the
+// serialization fails here instead of agreeing with itself.
+const CONVERSATION_INSTANT = '2026-04-30T17:30:08.089696768Z'
+
 // stampPointMetadata derives `passive-data-metadata.timestamp` as `date / 1000`,
-// so pinning `date` is what lets the server-side test retrieve this point.
+// so pinning `date` is what makes the point retrievable from the server.
 const POINT_DATE_MS = 1777570208089
 const POINT_TIMESTAMP = POINT_DATE_MS / 1000
 
-const dispatchConversationPoint = (serviceWorker, generatorId: string) => {
-  return serviceWorker.evaluate(async ({ generatorId, epochSeconds, dateMs }) => {
-    const pdk = self.rexPDKPlugin
+const GENERATOR_ID = 'datestring-server-test'
 
-    const waitFor = (condition: () => boolean, timeoutMs: number, label: string) => {
-      return new Promise<void>((resolve, reject) => {
-        const started = Date.now()
+// PDK uploads only when asked, and rejects until its database is open and its
+// configuration has arrived. Retrying absorbs that startup window without the
+// test inspecting the module to find out when it has passed.
+const fetchPointsFromServer = async (serviceWorker, request) => {
+  const deadline = Date.now() + 20000
 
-        const poll = () => {
-          if (condition()) {
-            resolve()
-          } else if (Date.now() - started > timeoutMs) {
-            reject(new Error(`Timed out waiting for: ${label}`))
-          } else {
-            self.setTimeout(poll, 25)
-          }
-        }
-
-        poll()
-      })
-    }
-
-    const countPoints = () => {
-      return new Promise<number>((resolve) => {
-        const request = pdk.database.transaction(['dataPoints'], 'readonly').objectStore('dataPoints').count()
-
-        request.onsuccess = () => resolve(request.result)
-      })
-    }
-
-    await waitFor(() => pdk.database !== null && pdk.uploadUrl !== '', 10000, 'database open and configuration loaded')
-
-    const stamp = new self.rexDateString(epochSeconds)
-
-    // Fails loudly if DateString stops being the thing this test assumes: a
-    // value the structured clone algorithm cannot carry.
-    if (Object.keys(stamp.value).length !== 0) {
-      throw new Error('Test setup invalid: DateString.value now has own enumerable properties, so structured clone would preserve it and this test could no longer fail.')
-    }
-
-    const before = await countPoints()
-
-    // Goes in the way a real producer does: rex-core's dispatchEvent fans the
-    // event out to every registered module, so this covers logEvent and the
-    // content-processing pass rather than starting at enqueueDataPoint. The
-    // spider reaches PDK by exactly this route, with these field names.
-    self.rexDispatchEvent({
-      name: generatorId,
-      date: dateMs,
-      started: stamp,
-      ended: stamp
+  for (;;) {
+    await serviceWorker.evaluate(() => {
+      return self.rexPDKPlugin.uploadQueuedDataPoints(() => {}).then(() => undefined, () => undefined)
     })
 
-    const started = Date.now()
+    const response = await request.get(`/data/points.json?timestamp=${POINT_TIMESTAMP}`)
 
-    while ((await countPoints()) <= before) {
-      if (Date.now() - started > 8000) {
-        throw new Error('Timed out waiting for the point to persist to IndexedDB.')
-      }
+    expect(response.ok()).toBeTruthy()
 
-      await new Promise((resolve) => self.setTimeout(resolve, 25))
+    const body = await response.json()
+
+    if (body.count > 0 || Date.now() > deadline) {
+      return body
     }
 
-    return stamp.toJSON()
-  }, { generatorId, epochSeconds: CONVERSATION_EPOCH_SECONDS, dateMs: POINT_DATE_MS })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
 }
 
-// No content processor is registered in this harness, so the DateString reaches
-// serialization with its prototype intact and its own toJSON flattens it to an
-// ISO string. A consumer that registers one (Keystone registers openredaction)
-// gets `{ value: <iso>, originalValue: '' }` instead, because the processing
-// walker rebuilds objects as plain ones and drops the prototype. Either way the
-// instant survives, and either way the defect replaced it with `{}`.
-test('a DateString on a dispatched point survives the persist to IndexedDB', async ({serviceWorker}) => {
-  const expectedIso = await dispatchConversationPoint(serviceWorker, 'datestring-persist-test')
+// A point dispatched before rex-core has a configuration is dropped:
+// enqueueDataPoint hands the undefined configuration to normalizeConfiguration
+// and the resulting rejection takes the point with it. rex-core's own
+// fetchConfiguration is the public signal for when that window has closed.
+const waitForConfiguration = (serviceWorker) => {
+  return serviceWorker.evaluate(() => {
+    return new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 10000
 
-  const persisted = await serviceWorker.evaluate(async (generatorId) => {
-    return new Promise((resolve) => {
-      const request = self.rexPDKPlugin.database.transaction(['dataPoints'], 'readonly').objectStore('dataPoints').getAll()
-
-      request.onsuccess = () => {
-        const record = request.result.find((candidate) => candidate.generatorId === generatorId)
-
-        resolve(record === undefined ? null : record.dataPoint)
+      const poll = () => {
+        self.rexCorePlugin.fetchConfiguration()
+          .then((configuration) => {
+            if (configuration !== undefined && configuration['passive_data_kit'] !== undefined) {
+              resolve()
+            } else if (Date.now() > deadline) {
+              reject(new Error('Timed out waiting for a configuration carrying passive_data_kit.'))
+            } else {
+              self.setTimeout(poll, 100)
+            }
+          })
       }
+
+      poll()
     })
-  }, 'datestring-persist-test')
+  })
+}
 
-  expect(persisted).not.toBeNull()
-  expect(persisted['started']).toEqual(expectedIso)
-  expect(persisted['ended']).toEqual(expectedIso)
-})
+test('a dispatched DateString reaches the server as the instant, not an empty object', async ({serviceWorker, request}) => {
+  await waitForConfiguration(serviceWorker)
 
-test('the DateString the server receives is the instant, not an empty object', async ({serviceWorker, request}) => {
-  const expectedIso = await dispatchConversationPoint(serviceWorker, 'datestring-server-test')
+  await serviceWorker.evaluate(({ generatorId, epochSeconds, dateMs }) => {
+    self.dispatchEvent({
+      name: generatorId,
+      date: dateMs,
+      started: new self.DateString(epochSeconds),
+      ended: new self.DateString(epochSeconds)
+    })
+  }, { generatorId: GENERATOR_ID, epochSeconds: CONVERSATION_EPOCH_SECONDS, dateMs: POINT_DATE_MS })
 
-  await serviceWorker.evaluate(() => self.rexPDKPlugin.uploadQueuedDataPoints(() => {}))
+  const body = await fetchPointsFromServer(serviceWorker, request)
 
-  // Asking the server what it stored closes the loop the in-worker assertions
-  // leave open: a point can look correct on its way out and still land empty.
-  const response = await request.get(`/data/points.json?timestamp=${POINT_TIMESTAMP}`)
+  expect(body.count).toEqual(1)
 
-  expect(response.ok()).toBeTruthy()
+  const received = body.points[0]
 
-  const body = await response.json()
-
-  const received = body.points.find((point) => point['passive-data-metadata']['generator-id'] === 'datestring-server-test')
-
-  expect(received).toBeDefined()
-  expect(received['started']).toEqual(expectedIso)
-  expect(received['ended']).toEqual(expectedIso)
+  expect(received['passive-data-metadata']['generator-id']).toEqual(GENERATOR_ID)
+  expect(received['started']).toEqual(CONVERSATION_INSTANT)
+  expect(received['ended']).toEqual(CONVERSATION_INSTANT)
 })

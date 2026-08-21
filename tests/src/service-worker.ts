@@ -9,16 +9,17 @@ console.log(`Imported ${pdkPlugin} into service worker context...`)
 self['rexCorePlugin'] = corePlugin
 self['rexPDKPlugin'] = pdkPlugin
 
-// Deliberately not named `dispatchEvent`: the service worker scope already has
-// a native one, so a test calling the bare name would dispatch a DOM event and
-// silently exercise nothing.
-self['rexDispatchEvent'] = dispatchEvent
+// rex-core exports dispatchEvent at module scope rather than on the plugin, so
+// the harness has to put it on `self` for a spec to reach it. Assigning the
+// bare name shadows EventTarget's dispatchEvent, which the worker scope also
+// has and which nothing here uses.
+self['dispatchEvent'] = dispatchEvent
 
 // The real DateString, so the persistence tests exercise the actual type that
 // lost its value rather than a local imitation of it. A stand-in can only
 // encode what we already believe about DateString; if the type changes, the
 // stand-in keeps passing while collection breaks.
-self['rexDateString'] = DateString
+self['DateString'] = DateString
 
 class TestDataPointAnnotator extends PassiveDataKitPointAnnotator {
   annotate(dataPoint: REXPDKDataPoint): Promise<void> {
