@@ -1017,13 +1017,19 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
       if (configuration['passive_data_kit'].identifier !== undefined) {
         delete configuration['passive_data_kit'].identifier
       }
+
+      if (configuration.token !== undefined) {
+        delete configuration.token
+      }
+
+      if (configuration['switch_url'] !== undefined) {
+        delete configuration['switch_url']
+      }
     }
   }
 
   handleMessage(message:any, sender:any, sendResponse:(response:any) => void):boolean  { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (message.messageType == 'transmitSynchronousEvent') {
-      
-      console.log(`[rex-passive-data-kit] transmitSynchronousEvent`)
       REXContentProcessorManager.getInstance().processContent(message.event)
         .then((processed) => {
           console.log(`[rex-passive-data-kit] transmitSynchronousEvent - processed content`)
