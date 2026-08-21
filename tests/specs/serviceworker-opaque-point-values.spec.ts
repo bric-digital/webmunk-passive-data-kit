@@ -30,15 +30,18 @@ const POINT_TIMESTAMP = POINT_DATE_MS / 1000
 
 const GENERATOR_ID = 'datestring-server-test'
 
-// PDK uploads only when asked, and rejects until its database is open and its
-// configuration has arrived. Retrying absorbs that startup window without the
-// test inspecting the module to find out when it has passed.
+// Nothing in PDK flushes the queue on its own, so the upload has to be asked
+// for. rex-core's refreshConfiguration notifies every registered module, and
+// PDK's handler is what calls uploadQueuedDataPoints, so the test can trigger
+// the upload without reaching into PDK. The response arrives before the upload
+// finishes, and the module rejects until its database is open, so the ask is
+// repeated until the point shows up rather than timed against internals.
 const fetchPointsFromServer = async (serviceWorker, request) => {
   const deadline = Date.now() + 20000
 
   for (;;) {
     await serviceWorker.evaluate(() => {
-      return self.rexPDKPlugin.uploadQueuedDataPoints(() => {}).then(() => undefined, () => undefined)
+      self.rexCorePlugin.handleMessage({ messageType: 'refreshConfiguration' }, null, () => {})
     })
 
     const response = await request.get(`/data/points.json?timestamp=${POINT_TIMESTAMP}`)
