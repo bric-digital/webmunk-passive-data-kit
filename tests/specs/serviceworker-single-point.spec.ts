@@ -13,8 +13,6 @@ test('Service worker single point transmission test', async ({serviceWorker}) =>
                 'source': 'rex-test-script'
               }
             }, this, (uploadResponse) => {
-              console.log('uploadResponse')
-              console.log(uploadResponse)
               testResolve(uploadResponse)
             })
           }
@@ -36,8 +34,6 @@ test('Service worker single point transmission test', async ({serviceWorker}) =>
         })
       })
       .then((workerResponse) => {
-        console.log(`[single-point] workerResponse: "${workerResponse}" -- ${typeof workerResponse} -- ${JSON.stringify(workerResponse)}`)
-
         expect(typeof workerResponse).toEqual('object')
         expect(workerResponse['logged']).toEqual(true)
         expect(workerResponse['message']).toEqual('Data point added successfully.')

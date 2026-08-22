@@ -164,6 +164,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
     // Validated at upload time, not here: a refresh that threw on a malformed
     // credential would wedge the module on a stale endpoint.
+
     this.endpointVersion = config['endpoint_version'] || ''
     this.bearerToken = config['authorization']?.token || ''
 
@@ -229,9 +230,6 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
   logEvent(event: REXPDKEvent) {
     if (event !== undefined) {
       if (['', null, undefined].includes(event['name']) == false) {
-        console.log('[rex-passive-data-kit] Enqueue data point for logging:')
-        console.log(event)
-
         REXContentProcessorManager.getInstance().processContent(event)
           .then((processed) => {
             this.enqueueDataPoint(event['name'], processed)
@@ -324,8 +322,6 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
       const storePoint = () => {
         if (this.queuedPoints.length === 0 || this.database === null) {
-          console.log(`[rex-passive-data-kit] All points persisted.`)
-
           resolve(pointsSaved)
         } else {
           const objectStore = this.database.transaction(['dataPoints'], 'readwrite').objectStore('dataPoints')
@@ -435,7 +431,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
     const body = await new Response(stream).arrayBuffer()
 
-    console.log(`[rex-passive-data-kit] Upload to "${this.uploadUrl}"...`)
+    console.log(`[rex-passive-data-kit] Upload (PUT) to "${this.uploadUrl}"...`)
 
     const response = await fetch(this.uploadUrl, {
       method: 'PUT',
@@ -513,7 +509,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
         .then((buffer) => {
           const compressedBase64 = this.blobToB64(buffer)
 
-          console.log(`[rex-passive-data-kit] Upload to "${this.uploadUrl}"...`)
+          console.log(`[rex-passive-data-kit] Upload (POST) to "${this.uploadUrl}"...`)
 
           fetch(this.uploadUrl, {
             method: 'POST',
@@ -581,19 +577,15 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     })
   }
 
-  uploadQueuedDataPoints(progressCallback: any, responses:any[] = [], delay:number=0) { // eslint-disable-line @typescript-eslint/no-explicit-any
+  uploadQueuedDataPoints(progressCallback: any = undefined, responses:any[] = [], delay:number=0) { // eslint-disable-line @typescript-eslint/no-explicit-any
     return new Promise<any>((resolve, reject) => { // eslint-disable-line @typescript-eslint/no-explicit-any
       if (this.currentlyUploading) {
-        console.log('[rex-passive-data-kit] Still uploading data points. Skipping.')
-
         reject('Still uploading data points. Skipping...')
       } else {
         this.currentlyUploading = true
 
         const uploadBlock = () => {
           this.persistDataPoints().then((pointsSaved: number) => {
-            console.log(`[passive-data-kit] ${pointsSaved} persisted. Continuing with uploadBlock`)
-
             if (this.database === null) {
               this.currentlyUploading = false
 
@@ -629,7 +621,9 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
 
                     console.log(`[rex-passive-data-kit] Remaining data points (this bundle): ${pendingRemaining}`)
 
-                    progressCallback(pendingRemaining)
+                    if (progressCallback !== undefined) {
+                      progressCallback(pendingRemaining)
+                    }
 
                     let bundleLength = 0
 
@@ -653,8 +647,6 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
                       'pending-points': pendingRemaining,
                       generatorId: 'pdk-system-status'
                     }
-
-                    console.log(`[rex-passive-data-kit] To XMIT: ${xmitBundle.length}`)
 
                     const transmitPromise = new Promise<void>((resolveStatus) => {
                       const pending:string[] = []
@@ -753,8 +745,6 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
                     })
                     
                     transmitPromise.then(() => {
-                      console.log(`[rex-passive-data-kit] XMITTING`)
-
                       xmitBundle.push(status)
 
                       if (toTransmit.length === 0) {
@@ -866,8 +856,7 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
       Object.assign(pointPayload, event)
 
       const transmitPoint = ((dataPoint:REXPDKDataPoint) => {
-        console.log(`[rex-passive-data-kit]: Transmitting synchronous point (${pointUrl})...`)
-        console.log(dataPoint)
+        console.log(`[rex-passive-data-kit]: Transmitting synchronous point to ${pointUrl} (POST)...`)
 
         fetch(pointUrl, {
           method: 'POST',
@@ -883,8 +872,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
             payload: JSON.stringify(dataPoint)
           })
         }).then((response) => {
-          console.log(`[rex-passive-data-kit]: Response received...`)
-          console.log(response)
+          // console.log(`[rex-passive-data-kit]: Response received...`)
+          // console.log(response)
 
           if (response.ok) {
             response.json().then((reply) => {
@@ -1044,8 +1033,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
     if (message.messageType == 'transmitSynchronousEvent') {
       REXContentProcessorManager.getInstance().processContent(message.event)
         .then((processed) => {
-          console.log(`[rex-passive-data-kit] transmitSynchronousEvent - processed content`)
-          console.log(processed)
+          // console.log(`[rex-passive-data-kit] transmitSynchronousEvent - processed content`)
+          // console.log(processed)
 
           this.transmitDataPoint(processed).then((response) => {
             sendResponse(response)

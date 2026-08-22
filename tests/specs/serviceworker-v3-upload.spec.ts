@@ -36,37 +36,30 @@ const uploadWithConfiguration = (serviceWorker, configuration) => {
               if (remaining === 0) {
                 resolve( {ok: false, error: 'no bundle was uploaded after 10 attempts' })
               } else {
-                console.log(`uploadWithConfiguration attempts remaining: ${remaining}`)
-
                 remaining = remaining - 1
               
                 self.rexPDKPlugin.updateConfiguration(pdkConfiguration)
 
-                console.log(`uploadWithConfiguration: uploadQueuedDataPoints`)
-
-                self.rexPDKPlugin.uploadQueuedDataPoints()
-                  .then((response) => {
-                    console.log(`uploadWithConfiguration: response: ${JSON.stringify(response)} -- ${remaining}`)
-
-                    if (Array.isArray(response) && response.length > 0) {
-                      resolve({ ok: true, response })
-                    } else {
-                      self.setTimeout(checkNext, 1000)
-                    }
-                  }).catch((err) => {
-                    console.log(`uploadWithConfiguration: error on uploadQueuedDataPoints: ${err}`)
-
+                self.rexPDKPlugin.uploadQueuedDataPoints().then((response) => {
+                  if (Array.isArray(response) && response.length > 0) {
+                    resolve({ ok: true, response })
+                  } else {
                     self.setTimeout(checkNext, 1000)
+                  }
+                }).catch((err) => {
+                  // console.log(`uploadWithConfiguration: error on uploadQueuedDataPoints: ${err}`)
 
-                    // resolve({ ok: false, error: `${err}`})
-                  })
+                  // self.setTimeout(checkNext, 1000)
+
+                  resolve({ ok: false, error: `${err}`})
+                })
               }
             }
 
             checkNext()
           })
         })
-      }, 1000)
+      }, 5000)
     })
   }, configuration)
 }
