@@ -924,6 +924,8 @@ class PassiveDataKitModule extends REXServiceWorkerModule {
               pointPayload['passive-data-metadata']['enqueued-at'] = (Date.now() / 1000)
             }
 
+            this.normalizeConfiguration(configuration)
+
             const configString = stringify(configuration)
 
             if (configString !== undefined) {
